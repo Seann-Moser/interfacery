@@ -1,0 +1,133 @@
+package {{.DirPackageName}}
+
+import (
+	"encoding/json"
+	"net/http"
+	"context"
+	"strconv"
+	"github.com/Seann-Moser/go-serve/server/endpoints"
+    "{{.ImportName}}"
+)
+{{- $parent := . }}
+
+// {{toPascalCase .InterfaceName}}Handlers struct holds the interface implementation and endpoint list
+type {{toPascalCase .InterfaceName}}Handlers struct {
+	Impl         {{.PackageName}}.{{.InterfaceName}}
+	EndpointList []*endpoints.Endpoint
+}
+
+// New{{toPascalCase $parent.InterfaceName}}Handlers creates a new Handlers instance
+func New{{toPascalCase $parent.InterfaceName}}Handlers(impl {{.PackageName}}.{{.InterfaceName}}) *{{toPascalCase .InterfaceName}}Handlers {
+	return &{{toPascalCase .InterfaceName}}Handlers{
+		Impl:         impl,
+		EndpointList: []*endpoints.Endpoint{},
+	}
+}
+
+// RegisterRoutes registers all the HTTP routes by populating the endpoint list
+func (h *{{toPascalCase .InterfaceName}}Handlers) RegisterRoutes() {
+	h.EndpointList = []*endpoints.Endpoint{
+	{{- range .Methods }}
+		{
+			SubDomain:        "",
+			Redirect:         "",
+			URLPath:          "{{.URLPath}}",
+			PermissionLevel:  0,
+			Role:             "",
+			Roles:            nil,
+			Method:           "{{.HTTPMethod}}",
+			Methods:          []string{"{{.HTTPMethod}}"},
+			ResponseTypeMap:  map[string]interface{}{"response": {{.ResponseType | or "nil"}}},
+			RequestTypeMap:   map[string]interface{}{"request": {{.RequestType | or "nil"}}},
+			QueryParams:      []string{ {{range $index, $param := .QueryParams}}{{if $index}}, {{end}}"{{$param}}"{{end}} },
+		},
+	{{- end }}
+	}
+}
+
+{{range .Methods}}
+// {{.HandlerName}} handles the {{.Name}} method
+func (h *{{toPascalCase $parent.InterfaceName}}Handlers) {{.HandlerName}}(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	{{- /* Parse Query Parameters */}}
+	{{- range .Params }}
+	{{.Name}}Str := r.URL.Query().Get("{{.Name}}")
+	if {{.Name}}Str == "" {
+		http.Error(w, "Missing parameter: {{.Name}}", http.StatusBadRequest)
+		return
+	}
+	{{if eq .Type "string"}}
+	{{.Name}} := {{.Name}}Str
+	{{else if eq .Type "int"}}
+	{{.Name}}, err := strconv.Atoi({{.Name}}Str)
+	if err != nil {
+		http.Error(w, "Invalid parameter: {{.Name}}", http.StatusBadRequest)
+		return
+	}
+	{{else}}
+	// Add more type conversions as needed
+	var {{.Name}} {{.Type}}
+	if err := json.Unmarshal([]byte({{.Name}}Str), &{{.Name}}); err != nil {
+		http.Error(w, "Invalid parameter format: {{.Name}}", http.StatusBadRequest)
+		return
+	}
+	{{end}}
+	{{- end }}
+
+	// Call the interface method
+	{{if .Returns | hasError }}
+		{{if .Returns | hasOnlyError }}
+			err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		{{else if .Returns | hasMultiple }}
+			result, err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			response := struct {
+				{{- range .Returns }}
+					{{- if ne .Type "error" }}
+						{{title .Type}} {{.Type}} ` + "`json:\"{{toSnakeCase .Type}}\"`" + `
+					{{- end }}
+				{{- end }}
+			}{
+				{{- range .Returns }}
+					{{- if ne .Type "error" }}
+						{{toLower .Type}}: result.{{toLower .Type}},
+					{{- end }}
+				{{- end }}
+			}
+			json.NewEncoder(w).Encode(response)
+		{{else}}
+			result, err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(result)
+		{{end}}
+	{{else}}
+		// If no error is returned
+		result := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
+		json.NewEncoder(w).Encode(result)
+	{{end}}
+
+	// If no returns, respond with success
+	{{if not .Returns }}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	{{end }}
+}
+{{end}}
+
+// Helper function for the template to handle optional fields
+func orFunc(value string, defaultValue string) string {
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
