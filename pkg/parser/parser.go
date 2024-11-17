@@ -1,15 +1,12 @@
 package parser
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"github.com/Seann-Moser/go-serve/pkg/ctxLogger"
 	"go.uber.org/zap"
 	"go/ast"
-	"go/format"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"golang.org/x/tools/go/packages"
@@ -99,7 +96,7 @@ func GenerateHTTPHandlers(ctx context.Context, i FileInterface, packageName, out
 			continue
 		}
 
-		methods := getMethods(ctx, interfaceSource, pkg.TypesInfo)
+		methods := getMethods(ctx, "/"+name, interfaceSource, pkg.TypesInfo)
 		ctxLogger.Info(ctx, "Found methods", zap.Int("count", len(methods)))
 		ctxLogger.Info(ctx, "Methods", zap.Any("methods", methods))
 		// Proceed to generate handlers using the methods
@@ -174,7 +171,7 @@ func getInterfaceSourceFromPackage(pkg *packages.Package, interfaceName string) 
 	return nil
 }
 
-func getMethods(ctx context.Context, interfaceSource *ast.InterfaceType, info *types.Info) []*Method {
+func getMethods(ctx context.Context, name string, interfaceSource *ast.InterfaceType, info *types.Info) []*Method {
 	var methods []*Method
 
 	for _, m := range interfaceSource.Methods.List {
@@ -247,54 +244,11 @@ func getMethods(ctx context.Context, interfaceSource *ast.InterfaceType, info *t
 
 		// Infer HTTPMethod and URLPath based on method name or custom tags
 		method.HTTPMethod = inferHTTPMethod(methodName)
-		method.URLPath = inferURLPath(methodName)
+		method.URLPath = inferURLPath(name, methodName)
 
 		methods = append(methods, &method)
 	}
 	return methods
-}
-
-func getInterfaceSource(interfaceSrc, interfaceName string) *ast.InterfaceType {
-	// Check if interfaceSrc contains a package declaration
-	trimmedSrc := strings.TrimSpace(interfaceSrc)
-	hasPackage := strings.HasPrefix(trimmedSrc, "package ")
-
-	source := interfaceSrc
-	if !hasPackage {
-		// Prepend a package declaration
-		source = "package main\n" + interfaceSrc
-	}
-
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "interface.go", source, parser.ParseComments)
-	if err != nil {
-		fmt.Printf("Failed to parse interface source: %v\n", err)
-		return nil
-	}
-	for _, decl := range file.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		for _, spec := range genDecl.Specs {
-			typeSpec, ok := spec.(*ast.TypeSpec)
-			if !ok || typeSpec.Type == nil {
-				continue
-			}
-			if typeSpec.Name.Name != interfaceName && interfaceName != "" {
-				continue
-			}
-			if i, ok := typeSpec.Type.(*ast.InterfaceType); ok {
-				var buf bytes.Buffer
-				if err := format.Node(&buf, fset, decl); err != nil {
-					return nil
-				}
-
-				return i
-			}
-		}
-	}
-	return nil
 }
 
 // Infer HTTP method from the method name (simple heuristic)
@@ -311,16 +265,122 @@ func inferHTTPMethod(methodName string) string {
 	return "GET" // Default to GET
 }
 
-// Infer URL path from the method name (simple heuristic)
-func inferURLPath(methodName string) string {
-	// Convert CamelCase to kebab-case
-	var path []rune
-	for i, r := range methodName {
-		if unicode.IsUpper(r) && i > 0 {
-			path = append(path, '-', unicode.ToLower(r))
-		} else {
-			path = append(path, unicode.ToLower(r))
+// Function to split CamelCase words, keeping abbreviations and mixed-case words together
+func splitCamelCase(s string) []string {
+	var words []string
+	var lastPos int
+	runes := []rune(s)
+
+	for i := 1; i < len(runes); i++ {
+		prev := runes[i-1]
+		curr := runes[i]
+
+		// Word boundary rules
+		if unicode.IsLower(prev) && unicode.IsUpper(curr) { // Lower -> Upper (e.g., "userId")
+			words = append(words, string(runes[lastPos:i]))
+			lastPos = i
+		} else if unicode.IsUpper(prev) && unicode.IsUpper(curr) { // Upper -> Upper
+			if i+1 < len(runes) && unicode.IsLower(runes[i+1]) { // "IDentifier"
+				words = append(words, string(runes[lastPos:i]))
+				lastPos = i
+			}
 		}
 	}
-	return "/" + string(path)
+
+	// Add the final word
+	words = append(words, string(runes[lastPos:]))
+	return words
+}
+
+// Infer URL path from the method name using an enhanced heuristic
+func inferURLPath(prefix string, methodName string, params ...Param) string {
+	// Split the method name into words
+	words := splitCamelCase(methodName)
+
+	// Initialize variables
+	action := ""
+	resources := []string{}
+	pathParams := []string{}
+
+	// Define a set of common actions
+	actionsSet := map[string]bool{
+		"Get":    true,
+		"Create": true,
+		"Update": true,
+		"Delete": true,
+		"List":   true,
+		"Add":    true,
+		"Remove": true,
+	}
+
+	// Process words to extract action and resources
+	i := 0
+	if i < len(words) && actionsSet[words[i]] {
+		action = words[i]
+		i++
+	}
+
+	// Collect resources until 'By' keyword
+	for i < len(words) {
+		if words[i] == "By" {
+			i++
+			break
+		}
+		resources = append(resources, words[i])
+		i++
+	}
+
+	// Map function parameter names to a lookup map
+	paramNames := make(map[string]bool)
+	for _, param := range params {
+		paramNames[strings.ToLower(param.Name)] = true
+	}
+
+	// Collect and combine path parameters from the method name after 'By'
+	var tempParam []string
+	for i < len(words) {
+		tempParam = append(tempParam, strings.ToLower(words[i]))
+		for i := 0; i < len(tempParam); i++ {
+			combinedParam := strings.Join(tempParam[i:], "")
+			if paramNames[combinedParam] {
+				pathParams = append(pathParams, combinedParam)
+				tempParam = nil // Reset tempParam for the next parameter
+
+				break
+			}
+		}
+		i++
+	}
+
+	// If no path parameters from method name, infer from parameters for certain actions
+	if len(pathParams) == 0 && (action == "Get" || action == "Update" || action == "Delete") {
+		for _, param := range params {
+			paramName := strings.ToLower(param.Name)
+			// Common identifier names
+			if paramName == "id" || strings.HasSuffix(paramName, "id") {
+				pathParams = append(pathParams, paramName)
+
+			}
+		}
+	}
+
+	// Build the path
+	var pathBuilder strings.Builder
+	for _, res := range resources {
+		// Pluralize resource names for collection endpoints
+		resourceName := strings.ToLower(res)
+		if (action == "List" || action == "Create") && !strings.HasSuffix(resourceName, "s") {
+			resourceName = resourceName + "s"
+		}
+		pathBuilder.WriteString("/")
+		pathBuilder.WriteString(resourceName)
+	}
+
+	for _, param := range pathParams {
+		pathBuilder.WriteString("/{")
+		pathBuilder.WriteString(param)
+		pathBuilder.WriteString("}")
+	}
+
+	return path.Join(strings.ToLower(prefix), pathBuilder.String())
 }
