@@ -1,14 +1,5 @@
 package parser
 
-type Param struct {
-	Name string
-	Type string
-}
-
-type Return struct {
-	Type string
-}
-
 type Method struct {
 	Name         string
 	HTTPMethod   string
@@ -19,4 +10,20 @@ type Method struct {
 	QueryParams  []string
 	ResponseType string
 	RequestType  string
+	HasContext   bool
+}
+
+type Param struct {
+	Name      string
+	Type      string
+	Package   string
+	IsPointer bool
+	IsElipse  bool
+}
+
+type Return struct {
+	Type      string
+	Package   string
+	IsPointer bool
+	IsElipse  bool
 }

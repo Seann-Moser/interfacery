@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,14 +47,13 @@ func ClientRunner(cmd *cobra.Command, args []string) error {
 	}
 	for _, gofile := range gofiles {
 		ctxLogger.Info(cmd.Context(), "Generating client for "+gofile.FilePath+"", zap.Strings("interfaces", gofile.Interfaces))
-		file, err := os.ReadFile(gofile.FilePath)
+
+		err = parser.GenerateHTTPHandlers(cmd.Context(), gofile, gofile.PackageName, viper.GetString("dest-dir"), "")
 		if err != nil {
 			return err
+
 		}
-		err = parser.GenerateHTTPHandlers(gofile, string(file), gofile.PackageName, viper.GetString("dest-dir"), "")
-		if err != nil {
-			return err
-		}
+
 	}
 	return nil
 }

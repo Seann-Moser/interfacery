@@ -71,11 +71,16 @@ func FindGoFilesWithInterfaces(rootDir, interfaceName string, ignoreDirs ...stri
 			if err != nil {
 				return err
 			}
+			f := strings.TrimSuffix(relativePath, "/"+pkgName+".go")
+			if strings.HasSuffix(f, ".go") {
+				s := strings.Split(f, "/")
+				f = strings.Join(s[:len(s)-1], "/")
+			}
 			result = append(result, FileInterface{
 				FilePath:    relativePath,
 				PackageName: pkgName,
 				Interfaces:  interfaces,
-				ImportName:  path.Join(currentDir, strings.TrimSuffix(strings.TrimSuffix(relativePath, "/"+pkgName+".go"), ".go")),
+				ImportName:  path.Join(currentDir, f),
 			})
 		}
 		return nil

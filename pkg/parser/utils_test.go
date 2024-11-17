@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"go/ast"
 	"testing"
 )
 
@@ -20,35 +19,35 @@ var (
 	}
 )
 
-func TestExprToString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    ast.Expr
-		expected string
-	}{
-		{"Ident", &ast.Ident{Name: "foo"}, "foo"},
-		{"SelectorExpr", &ast.SelectorExpr{
-			X:   &ast.Ident{Name: "pkg"},
-			Sel: &ast.Ident{Name: "Bar"},
-		}, "pkg.Bar"},
-		{"StarExpr", &ast.StarExpr{X: &ast.Ident{Name: "ptr"}}, "*ptr"},
-		{"ArrayType", &ast.ArrayType{Elt: &ast.Ident{Name: "int"}}, "[]int"},
-		{"MapType", &ast.MapType{
-			Key:   &ast.Ident{Name: "string"},
-			Value: &ast.Ident{Name: "int"},
-		}, "map[string]int"},
-		{"UnknownExpr", nil, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exprToString(tt.input)
-			if result != tt.expected {
-				t.Errorf("got %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
+//func TestExprToString(t *testing.T) {
+//	tests := []struct {
+//		name     string
+//		input    ast.Expr
+//		expected string
+//	}{
+//		{"Ident", &ast.Ident{Name: "foo"}, "foo"},
+//		{"SelectorExpr", &ast.SelectorExpr{
+//			X:   &ast.Ident{Name: "pkg"},
+//			Sel: &ast.Ident{Name: "Bar"},
+//		}, "pkg.Bar"},
+//		{"StarExpr", &ast.StarExpr{X: &ast.Ident{Name: "ptr"}}, "*ptr"},
+//		{"ArrayType", &ast.ArrayType{Elt: &ast.Ident{Name: "int"}}, "[]int"},
+//		{"MapType", &ast.MapType{
+//			Key:   &ast.Ident{Name: "string"},
+//			Value: &ast.Ident{Name: "int"},
+//		}, "map[string]int"},
+//		{"UnknownExpr", nil, ""},
+//	}
+//
+//	for _, tt := range tests {
+//		t.Run(tt.name, func(t *testing.T) {
+//			//result := exprToString(tt.input)
+//			if result != tt.expected {
+//				t.Errorf("got %v, want %v", result, tt.expected)
+//			}
+//		})
+//	}
+//}
 
 func TestDetermineHTTPMethod(t *testing.T) {
 	tests := []struct {

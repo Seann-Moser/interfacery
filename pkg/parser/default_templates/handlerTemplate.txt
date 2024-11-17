@@ -1,13 +1,26 @@
 package {{.DirPackageName}}
 
 import (
+{{- if .NeedsJSONImport }}
 	"encoding/json"
+{{- end }}
 	"net/http"
+{{- if .NeedsContextImport }}
 	"context"
+{{- end }}
+{{- if .NeedsStrconvImport }}
 	"strconv"
+{{- end }}
+{{- if .NeedsFmtImport }}
+	"fmt"
+{{- end }}
+{{- range $import, $used := .Imports }}
+	"{{$import}}"
+{{- end }}
 	"github.com/Seann-Moser/go-serve/server/endpoints"
-    "{{.ImportName}}"
+	"{{.ImportName}}"
 )
+
 {{- $parent := . }}
 
 // {{toPascalCase .InterfaceName}}Handlers struct holds the interface implementation and endpoint list
@@ -48,86 +61,94 @@ func (h *{{toPascalCase .InterfaceName}}Handlers) RegisterRoutes() {
 {{range .Methods}}
 // {{.HandlerName}} handles the {{.Name}} method
 func (h *{{toPascalCase $parent.InterfaceName}}Handlers) {{.HandlerName}}(w http.ResponseWriter, r *http.Request) {
+{{- if .HasContext }}
 	ctx := r.Context()
-	{{- /* Parse Query Parameters */}}
+{{- end }}
+
+	// Parse Query Parameters
 	{{- range .Params }}
-	{{.Name}}Str := r.URL.Query().Get("{{.Name}}")
-	if {{.Name}}Str == "" {
+	{{ $paramStr := getUniqueVarName (printf "%sStr" .Name) }}
+	{{ $paramVar := .Name }}
+	{{ $paramStr }} := r.URL.Query().Get("{{.Name}}")
+	if {{ $paramStr }} == "" {
 		http.Error(w, "Missing parameter: {{.Name}}", http.StatusBadRequest)
 		return
 	}
-	{{if eq .Type "string"}}
-	{{.Name}} := {{.Name}}Str
-	{{else if eq .Type "int"}}
-	{{.Name}}, err := strconv.Atoi({{.Name}}Str)
+	{{- if eq .Type "string" }}
+	{{ $paramVar }} := {{ $paramStr }}
+	{{- else if eq .Type "int" }}
+	{{ $paramVar }}, err := strconv.Atoi({{ $paramStr }})
 	if err != nil {
 		http.Error(w, "Invalid parameter: {{.Name}}", http.StatusBadRequest)
 		return
 	}
-	{{else}}
+	{{- else }}
 	// Add more type conversions as needed
-	var {{.Name}} {{.Type}}
-	if err := json.Unmarshal([]byte({{.Name}}Str), &{{.Name}}); err != nil {
+	{{ if .IsPointer }}
+	var {{ $paramVar }} *{{ if .Package }}{{.Package}}.{{ end }}{{.Type}}
+	{{ else }}
+	var {{ $paramVar }} {{ if .Package }}{{.Package}}.{{ end }}{{.Type}}
+	{{ end }}
+	if err := json.Unmarshal([]byte({{ $paramStr }}), &{{ $paramVar }}); err != nil {
 		http.Error(w, "Invalid parameter format: {{.Name}}", http.StatusBadRequest)
 		return
 	}
-	{{end}}
+	{{- end }}
 	{{- end }}
 
+	// Prepare arguments for the method call
+	{{- $args := list }}
+	{{- if .HasContext }}
+	{{- $args = append $args "ctx" }}
+	{{- end }}
+	{{- range .Params }}
+	{{- $args = append $args .Name }}
+	{{- end }}
+	{{- $argStr := join $args ", " }}
+
 	// Call the interface method
-	{{if .Returns | hasError }}
-		{{if .Returns | hasOnlyError }}
-			err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		{{else if .Returns | hasMultiple }}
-			result, err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			response := struct {
-				{{- range .Returns }}
-					{{- if ne .Type "error" }}
-						{{title .Type}} {{.Type}} ` + "`json:\"{{toSnakeCase .Type}}\"`" + `
-					{{- end }}
-				{{- end }}
-			}{
-				{{- range .Returns }}
-					{{- if ne .Type "error" }}
-						{{toLower .Type}}: result.{{toLower .Type}},
-					{{- end }}
-				{{- end }}
-			}
-			json.NewEncoder(w).Encode(response)
-		{{else}}
-			result, err := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(result)
-		{{end}}
-	{{else}}
-		// If no error is returned
-		result := h.Impl.{{.Name}}(ctx{{range .Params}}, {{.Name}}{{end}})
-		json.NewEncoder(w).Encode(result)
-	{{end}}
+	{{- if hasOnlyError .Returns }}
+	err := h.Impl.{{.Name}}({{$argStr}})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	{{- else if hasError .Returns }}
+	{{- if hasMultiple .Returns }}
+	{{- /* Assuming first return value is the result, and last is error */ -}}
+
+	result, err := h.Impl.{{.Name}}({{$argStr}})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	{{- if .ResponseType }}
+	json.NewEncoder(w).Encode(result)
+	{{- else }}
+	// Handle response
+	{{- end }}
+	{{- else }}
+	result, err := h.Impl.{{.Name}}({{$argStr}})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(result)
+	{{- end }}
+	{{- else }}
+	// If no error is returned
+	result := h.Impl.{{.Name}}({{$argStr}})
+	{{- if .ResponseType }}
+	json.NewEncoder(w).Encode(result)
+	{{- else }}
+	// Handle response
+	{{- end }}
+	{{- end }}
 
 	// If no returns, respond with success
-	{{if not .Returns }}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
-	{{end }}
+	{{- if not .Returns }}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	{{- end }}
 }
 {{end}}
-
-// Helper function for the template to handle optional fields
-func orFunc(value string, defaultValue string) string {
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
